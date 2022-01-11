@@ -1,4 +1,4 @@
-import backbone
+import models.backbone as backbone
 import utils
 
 import torch

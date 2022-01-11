@@ -11,7 +11,7 @@ import random
 import time
 
 import configs
-import backbone
+import models.backbone as backbone
 import data.feature_loader as feat_loader
 from data.datamgr import SetDataManager
 from methods.baselinetrain import BaselineTrain
@@ -20,7 +20,21 @@ from methods.protonet import ProtoNet
 from methods.matchingnet import MatchingNet
 from methods.relationnet import RelationNet
 from methods.maml import MAML
+
 from io_utils import model_dict, parse_args, get_resume_file, get_best_file , get_assigned_file
+import pdb
+#python ./test_office_resnet18.py --dataset oc_amazon --savename scratch_amazon --model visionresnet18 --method protonet --train_aug  --n_shot 1 
+#python ./test_office_resnet18.py --dataset oc_amazon --savename scratch_caltech10 --model visionresnet18 --method protonet --train_aug  --n_shot 1 
+#python ./test_office_resnet18.py --dataset oc_amazon --savename scratch_dslr --model visionresnet18 --method protonet --train_aug  --n_shot 1 
+#python ./test_office_resnet18.py --dataset oc_amazon --savename scratch_webcam --model visionresnet18 --method protonet --train_aug  --n_shot 1 
+
+#5way1shot
+# model-scratch amazon
+#oc_amazon    - 59.81% +- 1.00%
+#oc_caltech10 - 31.27% +- 0.64%
+#oc_dslr - 56.46% +- 0.85%
+#oc_webcam - 52.86% +- 0.75%
+
 
 def feature_evaluation(cl_data_file, model, n_way = 5, n_support = 5, n_query = 15, adaptation = False):
     class_list = cl_data_file.keys()
@@ -30,7 +44,8 @@ def feature_evaluation(cl_data_file, model, n_way = 5, n_support = 5, n_query = 
     for cl in select_class:
         img_feat = cl_data_file[cl]
         perm_ids = np.random.permutation(len(img_feat)).tolist()
-        z_all.append( [ np.squeeze( img_feat[perm_ids[i]]) for i in range(n_support+n_query) ] )     # stack each batch
+        img_num  = len(perm_ids)
+        z_all.append( [ np.squeeze( img_feat[perm_ids[i%img_num]]) for i in range(n_support+n_query) ] )     # stack each batch
 
     z_all = torch.from_numpy(np.array(z_all) )
    
@@ -90,78 +105,31 @@ if __name__ == '__main__':
        raise ValueError('Unknown method')
 
     model = model.cuda()
-
-    checkpoint_dir = '%s/checkpoints/%s/%s_%s' %(configs.save_dir, params.dataset, params.model, params.method)
-    if params.train_aug:
-        checkpoint_dir += '_aug'
-    if not params.method in ['baseline', 'baseline++'] :
-        checkpoint_dir += '_%dway_%dshot' %( params.train_n_way, params.n_shot)
-
-    #modelfile   = get_resume_file(checkpoint_dir)
-
-    if not params.method in ['baseline', 'baseline++'] : 
-        if params.save_iter != -1:
-            modelfile   = get_assigned_file(checkpoint_dir,params.save_iter)
-        else:
-            modelfile   = get_best_file(checkpoint_dir)
-        if modelfile is not None:
-            tmp = torch.load(modelfile)
-            model.load_state_dict(tmp['state'])
+    # state_dict = {}
+    # weights = torch.load(params.tweights)#['model_state_dict']
+    # for k,v in weights.items():
+    #     if 'fc' not in k:
+    #         state_dict[k] = v
+    # model.feature.load_state_dict(state_dict, strict=True)#['state'])
 
     split = params.split
     if params.save_iter != -1:
         split_str = split + "_" +str(params.save_iter)
     else:
         split_str = split
-    if params.method in ['maml', 'maml_approx']: #maml do not support testing with feature
-        if 'Conv' in params.model:
-            if params.dataset in ['omniglot', 'cross_char']:
-                image_size = 28
-            else:
-                image_size = 84 
-        else:
-            image_size = 224
+    
+    #novel_file = os.path.join( checkpoint_dir.replace("checkpoints","features"), split_str +".hdf5") #defaut split = novel, but you can also test base or val classes
+    novel_file = params.novel_file.format(params.savename, params.dataset)
 
-        datamgr         = SetDataManager(image_size, n_eposide = iter_num, n_query = 15 , **few_shot_params)
-        
-        if params.dataset == 'cross':
-            if split == 'base':
-                loadfile = configs.data_dir['miniImagenet'] + 'all.json' 
-            else:
-                loadfile   = configs.data_dir['CUB'] + split +'.json'
-        elif params.dataset == 'cross_char':
-            if split == 'base':
-                loadfile = configs.data_dir['omniglot'] + 'noLatin.json' 
-            else:
-                loadfile  = configs.data_dir['emnist'] + split +'.json' 
-        else: 
-            loadfile    = configs.data_dir[params.dataset] + split + '.json'
+    cl_data_file = feat_loader.init_loader(novel_file)
 
-        novel_loader     = datamgr.get_data_loader( loadfile, aug = False)
-        if params.adaptation:
-            model.task_update_num = 100 #We perform adaptation on MAML simply by updating more times.
-        model.eval()
-        acc_mean, acc_std = model.test_loop( novel_loader, return_std = True)
+    for i in range(iter_num):
+        acc = feature_evaluation(cl_data_file, model, n_query = 15, adaptation = params.adaptation, **few_shot_params)
+        acc_all.append(acc)
 
-    else:
-        novel_file = os.path.join( checkpoint_dir.replace("checkpoints","features"), split_str +".hdf5") #defaut split = novel, but you can also test base or val classes
-        cl_data_file = feat_loader.init_loader(novel_file)
+    acc_all  = np.asarray(acc_all)
+    acc_mean = np.mean(acc_all)
+    acc_std  = np.std(acc_all)
+    print(params.savename, '-', params.dataset)
+    print('%d Test Acc = %4.2f%% +- %4.2f%%' %(iter_num, acc_mean, 1.96* acc_std/np.sqrt(iter_num)))
 
-        for i in range(iter_num):
-            acc = feature_evaluation(cl_data_file, model, n_query = 15, adaptation = params.adaptation, **few_shot_params)
-            acc_all.append(acc)
-
-        acc_all  = np.asarray(acc_all)
-        acc_mean = np.mean(acc_all)
-        acc_std  = np.std(acc_all)
-        print('%d Test Acc = %4.2f%% +- %4.2f%%' %(iter_num, acc_mean, 1.96* acc_std/np.sqrt(iter_num)))
-    with open('./record/results.txt' , 'a') as f:
-        timestamp = time.strftime("%Y%m%d-%H%M%S", time.localtime()) 
-        aug_str = '-aug' if params.train_aug else ''
-        aug_str += '-adapted' if params.adaptation else ''
-        if params.method in ['baseline', 'baseline++'] :
-            exp_setting = '%s-%s-%s-%s%s %sshot %sway_test' %(params.dataset, split_str, params.model, params.method, aug_str, params.n_shot, params.test_n_way )
-        else:
-            exp_setting = '%s-%s-%s-%s%s %sshot %sway_train %sway_test' %(params.dataset, split_str, params.model, params.method, aug_str , params.n_shot , params.train_n_way, params.test_n_way )
-        acc_str = '%d Test Acc = %4.2f%% +- %4.2f%%' %(iter_num, acc_mean, 1.96* acc_std/np.sqrt(iter_num))
-        f.write( 'Time: %s, Setting: %s, Acc: %s \n' %(timestamp,exp_setting,acc_str)  )

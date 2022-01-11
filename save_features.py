@@ -6,7 +6,7 @@ import glob
 import h5py
 
 import configs
-import backbone
+import models.backbone as backbone
 from data.datamgr import SimpleDataManager
 from methods.baselinetrain import BaselineTrain
 from methods.baselinefinetune import BaselineFinetune
@@ -16,6 +16,9 @@ from methods.relationnet import RelationNet
 from methods.maml import MAML
 from io_utils import model_dict, parse_args, get_resume_file, get_best_file, get_assigned_file 
 
+import pdb
+
+#python ./save_features_office_resnet18.py --dataset oc_amazon --model visionresnet18 --method protonet --train_aug  --n_shot 1 --savename scratch_amazon --tweights /home/suh/deeplearning/pytrain_config/pycifar/classification_training/office_caltech_resnet18_scratch/amazon/checkpoints/resnet18_vision-epoch120-acc100.000.pth
 
 def save_features(model, data_loader, outfile ):
     f = h5py.File(outfile, 'w')
@@ -84,10 +87,10 @@ if __name__ == '__main__':
         modelfile   = get_best_file(checkpoint_dir)
 
     if params.save_iter != -1:
-        outfile = os.path.join( checkpoint_dir.replace("checkpoints","features"), split + "_" + str(params.save_iter)+ ".hdf5") 
+        outfile = os.path.join( checkpoint_dir.replace("checkpoints","features/"+params.savename),  split + "_" + str(params.save_iter)+ ".hdf5") 
     else:
-        outfile = os.path.join( checkpoint_dir.replace("checkpoints","features"), split + ".hdf5") 
-
+        outfile = os.path.join( checkpoint_dir.replace("checkpoints","features/"+params.savename),  split + ".hdf5") 
+    print(outfile)
     datamgr         = SimpleDataManager(image_size, batch_size = 64)
     data_loader      = datamgr.get_data_loader(loadfile, aug = False)
 
@@ -106,17 +109,14 @@ if __name__ == '__main__':
         model = model_dict[params.model]()
 
     model = model.cuda()
-    tmp = torch.load(modelfile)
-    state = tmp['state']
-    state_keys = list(state.keys())
-    for i, key in enumerate(state_keys):
-        if "feature." in key:
-            newkey = key.replace("feature.","")  # an architecture model has attribute 'feature', load architecture feature to backbone by casting name from 'feature.trunk.xx' to 'trunk.xx'  
-            state[newkey] = state.pop(key)
-        else:
-            state.pop(key)
-            
-    model.load_state_dict(state)
+
+    state_dict = {}
+    weights = torch.load(params.tweights)#['model_state_dict']
+    for k,v in weights.items():
+        if 'fc' not in k:
+            state_dict[k] = v
+    model.load_state_dict(state_dict, strict=True)#['state'])        
+    #model.load_state_dict(state)
     model.eval()
 
     dirname = os.path.dirname(outfile)

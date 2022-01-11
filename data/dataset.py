@@ -26,7 +26,7 @@ class SimpleDataset:
         return len(self.meta['image_names'])
 
 
-class SetDataset:
+class SetDataset: 
     def __init__(self, data_file, batch_size, transform):
         with open(data_file, 'r') as f:
             self.meta = json.load(f)
@@ -64,6 +64,7 @@ class SubDataset:
 
     def __getitem__(self,i):
         #print( '%d -%d' %(self.cl,i))
+        i = i % len(self.sub_meta)
         image_path = os.path.join( self.sub_meta[i])
         img = Image.open(image_path).convert('RGB')
         img = self.transform(img)

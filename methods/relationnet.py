@@ -1,6 +1,6 @@
 # This code is modified from https://github.com/floodsung/LearningToCompare_FSL 
 
-import backbone
+import models.backbone as backbone
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -22,16 +22,18 @@ class RelationNet(MetaTemplate):
             self.loss_fn = nn.CrossEntropyLoss()
 
     def set_forward(self,x,is_feature = False):
-        z_support, z_query  = self.parse_feature(x,is_feature)
+        z_support, z_query  = self.parse_feature(x,is_feature) #way,shot,C
 
         z_support   = z_support.contiguous()
-        z_proto     = z_support.view( self.n_way, self.n_support, *self.feat_dim ).mean(1) 
-        z_query     = z_query.contiguous().view( self.n_way* self.n_query, *self.feat_dim )
+        z_proto     = z_support.view( self.n_way, self.n_support, *self.feat_dim ).mean(1)  #5-way 64,19,19
+        z_query     = z_query.contiguous().view( self.n_way* self.n_query, *self.feat_dim ) #80
 
         
         z_proto_ext = z_proto.unsqueeze(0).repeat(self.n_query* self.n_way,1,1,1,1)
         z_query_ext = z_query.unsqueeze(0).repeat( self.n_way,1,1,1,1)
-        z_query_ext = torch.transpose(z_query_ext,0,1)
+
+
+        z_query_ext = torch.transpose(z_query_ext,0,1) #80.5.64.19,19
         extend_final_feat_dim = self.feat_dim.copy()
         extend_final_feat_dim[0] *= 2
         relation_pairs = torch.cat((z_proto_ext,z_query_ext),2).view(-1, *extend_final_feat_dim)
@@ -91,18 +93,26 @@ class RelationNet(MetaTemplate):
 
         self.relation_module.load_state_dict(relation_module_clone.state_dict())
         return relations
-    def set_forward_loss(self, x):
+
+    def set_forward_loss(self, x, return_scores = False):
         y = torch.from_numpy(np.repeat(range( self.n_way ), self.n_query ))
 
         scores = self.set_forward(x)
+        loss = 0
         if self.loss_type == 'mse':
             y_oh = utils.one_hot(y, self.n_way)
             y_oh = Variable(y_oh.cuda())            
 
-            return self.loss_fn(scores, y_oh )
+            loss =  self.loss_fn(scores, y_oh )
         else:
             y = Variable(y.cuda())
-            return self.loss_fn(scores, y )
+            loss = self.loss_fn(scores, y )
+        
+        if return_scores == True:
+            return loss, scores
+        else:
+            return loss
+
 
 class RelationConvBlock(nn.Module):
     def __init__(self, indim, outdim, padding = 0):

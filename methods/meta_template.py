@@ -1,4 +1,4 @@
-import backbone
+from models import backbone
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -6,15 +6,18 @@ import numpy as np
 import torch.nn.functional as F
 import utils
 from abc import abstractmethod
+from models import googlenet
+import pdb
 
 class MetaTemplate(nn.Module):
     def __init__(self, model_func, n_way, n_support, change_way = True):
         super(MetaTemplate, self).__init__()
-        self.n_way      = n_way
-        self.n_support  = n_support
-        self.n_query    = -1 #(change depends on input) 
-        self.feature    = model_func()
-        self.feat_dim   = self.feature.final_feat_dim
+        self.n_way      = n_way     #5
+        self.n_support  = n_support #5
+        self.n_query    = -1 #(change depends on input)  #16
+        #self.feature    = model_func(init_weights=False) # only for google
+        self.feature = model_func()
+        self.feat_dim   = self.feature.final_feat_dim #[64,19,19]
         self.change_way = change_way  #some methods allow different_way classification during training and test
 
     @abstractmethod
@@ -30,17 +33,41 @@ class MetaTemplate(nn.Module):
         return out
 
     def parse_feature(self,x,is_feature):
+        self.n_query = x.size(1) - self.n_support 
         x    = Variable(x.cuda())
+        
         if is_feature:
             z_all = x
         else:
             x           = x.contiguous().view( self.n_way * (self.n_support + self.n_query), *x.size()[2:]) 
             z_all       = self.feature.forward(x)
+            if type(z_all) == googlenet.GoogLeNetOutputs:
+                z_all = z_all[0]
+
             z_all       = z_all.view( self.n_way, self.n_support + self.n_query, -1)
         z_support   = z_all[:, :self.n_support]
         z_query     = z_all[:, self.n_support:]
 
         return z_support, z_query
+
+    def parse_features_total(self,x,is_feature,get_features=True):
+        self.n_query = x.size(1) - self.n_support 
+        x    = Variable(x.cuda())
+        z_supports = []
+        z_queries  = []
+        if is_feature:
+            z_all = x
+        else:
+            x           = x.contiguous().view( self.n_way * (self.n_support + self.n_query), *x.size()[2:]) 
+            z_alls      = self.feature.forward(x,get_features=get_features)
+            for z_all in z_alls:
+                z_all = z_all.view( self.n_way, self.n_support + self.n_query, -1)
+                z_support   = z_all[:, :self.n_support]
+                z_query     = z_all[:, self.n_support:]
+                z_supports.append(z_support)
+                z_queries.append(z_query)
+        #return z_support, z_query
+        return z_supports,z_queries
 
     def correct(self, x):       
         scores = self.set_forward(x)
@@ -56,18 +83,19 @@ class MetaTemplate(nn.Module):
 
         avg_loss=0
         for i, (x,_ ) in enumerate(train_loader):
-            self.n_query = x.size(1) - self.n_support           
+            self.n_query = x.size(1) - self.n_support   # x.size- [5,21,3,84,84]    
             if self.change_way:
                 self.n_way  = x.size(0)
             optimizer.zero_grad()
             loss = self.set_forward_loss( x )
             loss.backward()
             optimizer.step()
-            avg_loss = avg_loss+loss.data[0]
+            avg_loss = avg_loss+loss.item()#loss.data[0]
 
             if i % print_freq==0:
                 #print(optimizer.state_dict()['param_groups'][0]['lr'])
                 print('Epoch {:d} | Batch {:d}/{:d} | Loss {:f}'.format(epoch, i, len(train_loader), avg_loss/float(i+1)))
+
 
     def test_loop(self, test_loader, record = None):
         correct =0

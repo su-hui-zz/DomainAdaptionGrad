@@ -1,6 +1,6 @@
 # This code is modified from https://github.com/facebookresearch/low-shot-shrink-hallucinate
 
-import backbone
+import models.backbone as backbone
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
